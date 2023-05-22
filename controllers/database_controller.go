@@ -61,6 +61,7 @@ type DatabaseReconciler struct {
 
 var (
 	dbPhaseCreate               = "Creating"
+	dbPhaseCreateReadOnly       = "CreatingReadOnlyUser"
 	dbPhaseInstanceAccessSecret = "InstanceAccessSecretCreating"
 	dbPhaseProxy                = "ProxyCreating"
 	dbPhaseSecretsTemplating    = "SecretsTemplating"
@@ -198,9 +199,13 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			// when database creation failed, don't requeue request. to prevent exceeding api limit (ex: against google api)
 			return r.manageError(ctx, dbcr, err, false)
 		}
+		
+		dbcr.Status.Phase = dbPhaseCreateReadOnly
+		if dbcr.Spec.ReadOnlyUser { 
+			r.Recorder.Event(dbcr, "Warning", "Experimental feature", "Creating a read only user is an experimenal feature")
+		}
 
 		dbcr.Status.Phase = dbPhaseInstanceAccessSecret
-
 		if err = r.createInstanceAccessSecret(ctx, dbcr, ownership); err != nil {
 			return r.manageError(ctx, dbcr, err, true)
 		}
@@ -356,6 +361,9 @@ func (r *DatabaseReconciler) createDatabase(ctx context.Context, dbcr *kciv1beta
 
 	dbcr.Status.DatabaseName = databaseCred.Name
 	dbcr.Status.UserName = databaseCred.Username
+	if dbcr.Spec.ReadOnlyUser {
+		dbcr.Status.ReadOnlyUserName = databaseCred.ReadOnlyUsername
+	}
 	logrus.Infof("DB: namespace=%s, name=%s successfully created", dbcr.Namespace, dbcr.Name)
 	return nil
 }
@@ -369,6 +377,7 @@ func (r *DatabaseReconciler) deleteDatabase(ctx context.Context, dbcr *kciv1beta
 	databaseCred := database.Credentials{
 		Name:     dbcr.Status.DatabaseName,
 		Username: dbcr.Status.UserName,
+		ReadOnlyUsername: dbcr.Status.ReadOnlyUserName,
 	}
 
 	db, err := determinDatabaseType(dbcr, databaseCred)

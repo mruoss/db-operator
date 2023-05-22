@@ -600,6 +600,8 @@ spec:
                 - sqlPort
                 - status
                 type: object
+              readOnlyUser:
+                type: string
               status:
                 type: boolean
               user:
@@ -608,6 +610,7 @@ spec:
             - database
             - instanceRef
             - phase
+            - readOnlyUser
             - status
             - user
             type: object

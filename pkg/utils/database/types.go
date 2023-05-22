@@ -22,6 +22,8 @@ type Credentials struct {
 	Username         string
 	Password         string
 	TemplatedSecrets map[string]string
+	ReadOnlyUsername string
+	ReadOnlyPassword string
 }
 
 // DatabaseAddress contains host and port of a database instance
@@ -40,8 +42,10 @@ type AdminCredentials struct {
 type Database interface {
 	createDatabase(admin AdminCredentials) error
 	createUser(admin AdminCredentials) error
+	createReadOnlyUser(admin AdminCredentials) error
 	deleteDatabase(admin AdminCredentials) error
 	deleteUser(admin AdminCredentials) error
+	deleteReadOnlyUser(admin AdminCredentials) error
 	CheckStatus() error
 	GetCredentials() Credentials
 	ParseAdminCredentials(data map[string][]byte) (AdminCredentials, error)

@@ -48,6 +48,8 @@ type Postgres struct {
 	DropPublicSchema bool
 	Schemas          []string
 	Template         string
+	ReadOnlyUser     string
+	ReadOnlyPassword string
 }
 
 const postgresDefaultSSLMode = "disable"
@@ -108,6 +110,12 @@ func (p Postgres) isDbExist(admin AdminCredentials) bool {
 
 func (p Postgres) isUserExist(admin AdminCredentials) bool {
 	check := fmt.Sprintf("SELECT 1 FROM pg_user WHERE usename = '%s';", p.User)
+
+	return p.isRowExist("postgres", check, admin.Username, admin.Password)
+}
+
+func (p Postgres) isReadOnlyUserExists(admin AdminCredentials) bool {
+	check := fmt.Sprintf("SELECT 1 FROM pg_user WHERE usename = '%s';", p.ReadOnlyUser)
 
 	return p.isRowExist("postgres", check, admin.Username, admin.Password)
 }
@@ -204,7 +212,6 @@ func (p Postgres) createUser(admin AdminCredentials) error {
 	create := fmt.Sprintf("CREATE USER \"%s\" WITH ENCRYPTED PASSWORD '%s' NOSUPERUSER;", p.User, p.Password)
 	grant := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";", p.Database, p.User)
 	update := fmt.Sprintf("ALTER ROLE \"%s\" WITH ENCRYPTED PASSWORD '%s';", p.User, p.Password)
-
 	if !p.isUserExist(admin) {
 		err := p.executeExec("postgres", create, admin)
 		if err != nil {
@@ -229,6 +236,63 @@ func (p Postgres) createUser(admin AdminCredentials) error {
 		grantUserAccess := fmt.Sprintf("GRANT ALL ON SCHEMA \"%s\" TO \"%s\"", s, p.User)
 		if err := p.executeExec(p.Database, grantUserAccess, admin); err != nil {
 			logrus.Errorf("failed to grant usage access to %s on schema %s: %s", p.User, s, err)
+			return err
+		}
+	}
+	if len(p.ReadOnlyUser) > 0 {
+		return p.createReadOnlyUser(admin)
+	} else {
+		return p.deleteReadOnlyUser(admin)
+	}
+}
+
+func (p Postgres) createReadOnlyUser(admin AdminCredentials) error {
+	create := fmt.Sprintf("CREATE USER \"%s\" WITH ENCRYPTED PASSWORD '%s' NOSUPERUSER;", p.ReadOnlyUser, p.ReadOnlyPassword)
+	update := fmt.Sprintf("ALTER ROLE \"%s\" WITH ENCRYPTED PASSWORD '%s';", p.ReadOnlyUser, p.ReadOnlyPassword)
+	logrus.Debug(!p.isReadOnlyUserExists(admin))
+	logrus.Info("LALALALALALALAALALa")
+	if !p.isReadOnlyUserExists(admin) {
+		logrus.Info("Creating an user")
+		err := p.executeExec("postgres", create, admin)
+		if err != nil {
+			logrus.Errorf("failed creating postgres readonly user - %s", err)
+			return err
+		}
+	} else {
+		logrus.Info("Updating an User")
+		err := p.executeExec("postgres", update, admin)
+		if err != nil {
+			logrus.Errorf("failed updating postgres readonly user %s - %s", update, err)
+			return err
+		}
+	}
+
+	schemas := p.Schemas
+
+	if !p.DropPublicSchema {
+		schemas = append(schemas, "public")
+	}
+
+	for _, s := range schemas {
+		grantUsage := fmt.Sprintf("GRANT USAGE ON SCHEMA \"%s\" TO \"%s\"", s, p.ReadOnlyUser)
+		grantTables := fmt.Sprintf("GRANT SELECT ON ALL TABLES IN SCHEMA \"%s\" TO \"%s\"", s, p.ReadOnlyUser)
+		alter := fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE \"%s\" IN SCHEMA \"%s\" GRANT SELECT ON TABLES TO \"%s\";", p.User, s, p.ReadOnlyUser)
+
+		err := p.executeExec(p.Database, grantUsage, admin)
+		if err != nil {
+			logrus.Errorf("failed updating postgres user %s - %s", grantTables, err)
+			return err
+		}
+
+		err = p.executeExec(p.Database, grantTables, admin)
+		if err != nil {
+			logrus.Errorf("failed updating postgres user %s - %s", grantTables, err)
+			return err
+		}
+
+		err = p.executeExec(p.Database, alter, admin)
+		if err != nil {
+			logrus.Errorf("failed updating postgres user %s - %s", alter, err)
 			return err
 		}
 	}
@@ -310,6 +374,25 @@ func (p Postgres) deleteUser(admin AdminCredentials) error {
 
 	if p.isUserExist(admin) {
 		logrus.Debugf("deleting user %s", p.User)
+		err := p.executeExec("postgres", delete, admin)
+		if err != nil {
+			pqErr := err.(*pq.Error)
+			if pqErr.Code == "2BP01" {
+				// 2BP01 dependent_objects_still_exist
+				logrus.Infof("%s", err)
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (p Postgres) deleteReadOnlyUser(admin AdminCredentials) error {
+	delete := fmt.Sprintf("DROP USER \"%s\";", p.ReadOnlyUser)
+
+	if p.isReadOnlyUserExists(admin) {
+		logrus.Infof("deleting user %s", p.User)
 		err := p.executeExec("postgres", delete, admin)
 		if err != nil {
 			pqErr := err.(*pq.Error)

@@ -47,10 +47,16 @@ const (
 	fieldMysqlDB           = "DB"
 	fieldMysqlUser         = "USER"
 	fieldMysqlPassword     = "PASSWORD"
+	fieldReadOnlyUsername  = "READONLY_USERNAME"
+	fieldReadOnlyPassword  = "READONLY_PASSWORD"
 )
 
-func getBlockedTempatedKeys() []string {
-	return []string{fieldMysqlDB, fieldMysqlPassword, fieldMysqlUser, fieldPostgresDB, fieldPostgresUser, fieldPostgressPassword}
+func getBlockedTempatedKeys(readOnlyUser bool) (blockedKeys []string) {
+	blockedKeys = []string{fieldMysqlDB, fieldMysqlPassword, fieldMysqlUser, fieldPostgresDB, fieldPostgresUser, fieldPostgressPassword}
+	if readOnlyUser {
+		blockedKeys = append(blockedKeys, fieldReadOnlyPassword, fieldReadOnlyUsername)
+	}
+	return
 }
 
 func determinDatabaseType(dbcr *kciv1beta1.Database, dbCred database.Credentials) (database.Database, error) {
@@ -103,6 +109,11 @@ func determinDatabaseType(dbcr *kciv1beta1.Database, dbCred database.Credentials
 			Schemas:          dbcr.Spec.Postgres.Schemas,
 			Template:         dbcr.Spec.Postgres.Template,
 		}
+		if dbcr.Spec.ReadOnlyUser {
+			logrus.Debug("Creating readonly")
+			db.ReadOnlyUser = dbCred.ReadOnlyUsername
+			db.ReadOnlyPassword = dbCred.ReadOnlyPassword
+		}
 
 		return db, nil
 
@@ -116,6 +127,10 @@ func determinDatabaseType(dbcr *kciv1beta1.Database, dbCred database.Credentials
 			Password:     dbCred.Password,
 			SSLEnabled:   instance.Spec.SSLConnection.Enabled,
 			SkipCAVerify: instance.Spec.SSLConnection.SkipVerify,
+		}
+		if dbcr.Spec.ReadOnlyUser {
+			db.ReadOnlyUser = dbCred.ReadOnlyUsername
+			db.ReadOnlyPassword = dbCred.ReadOnlyPassword
 		}
 
 		return db, nil
@@ -175,6 +190,21 @@ func parseDatabaseSecretData(dbcr *kciv1beta1.Database, data map[string][]byte) 
 			return cred, errors.New("POSTGRES_PASSWORD key does not exist in secret data")
 		}
 
+		if dbcr.Spec.ReadOnlyUser {
+			logrus.Info("It's true, bud")
+			if user, ok := data["READONLY_USERNAME"]; ok {
+				logrus.Info(user)
+				cred.ReadOnlyUsername = string(user)
+			} else {
+				return cred, errors.New("READONLY_USERNAME key does not exist in secret data")
+			}
+			if pass, ok := data["READONLY_PASSWORD"]; ok {
+				cred.ReadOnlyPassword = string(pass)
+			} else {
+				return cred, errors.New("READONLY_PASSWORD key does not exist in secret data")
+			}
+		}
+
 		return cred, nil
 	case "mysql":
 		if name, ok := data["DB"]; ok {
@@ -193,6 +223,19 @@ func parseDatabaseSecretData(dbcr *kciv1beta1.Database, data map[string][]byte) 
 			cred.Password = string(pass)
 		} else {
 			return cred, errors.New("PASSWORD key does not exist in secret data")
+		}
+
+		if dbcr.Spec.ReadOnlyUser {
+			if user, ok := data["READONLY_USERNAME"]; ok {
+				cred.ReadOnlyUsername = string(user)
+			} else {
+				return cred, errors.New("READONLY_USERNAME key does not exist in secret data")
+			}
+			if pass, ok := data["READONLY_PASSWORD"]; ok {
+				cred.ReadOnlyPassword = string(pass)
+			} else {
+				return cred, errors.New("READONLY_PASSWORD key does not exist in secret data")
+			}
 		}
 
 		return cred, nil
@@ -217,12 +260,24 @@ func generateDatabaseSecretData(dbcr *kciv1beta1.Database) (map[string][]byte, e
 	dbUser := dbcr.Namespace + "-" + dbcr.Name
 	dbPassword := kci.GeneratePass()
 
+	var dbReadOnlyUser string
+	var dbReadOnlyPassword string
+
+	if dbcr.Spec.ReadOnlyUser {
+		dbReadOnlyUser = dbUser + "-" + "readonly"
+		dbReadOnlyPassword = kci.GeneratePass()
+	}
+
 	switch engine {
 	case "postgres":
 		data := map[string][]byte{
 			"POSTGRES_DB":       []byte(dbName),
 			"POSTGRES_USER":     []byte(dbUser),
 			"POSTGRES_PASSWORD": []byte(dbPassword),
+		}
+		if dbcr.Spec.ReadOnlyUser {
+			data["READONLY_USERNAME"] = []byte(dbReadOnlyUser)
+			data["READONLY_PASSWORD"] = []byte(dbReadOnlyPassword)
 		}
 		return data, nil
 	case "mysql":
@@ -231,6 +286,12 @@ func generateDatabaseSecretData(dbcr *kciv1beta1.Database) (map[string][]byte, e
 			"USER":     []byte(kci.StringSanitize(dbUser, mysqlUserLengthLimit)),
 			"PASSWORD": []byte(dbPassword),
 		}
+
+		if dbcr.Spec.ReadOnlyUser {
+			data["READONLY_USERNAME"] = []byte(dbReadOnlyUser)
+			data["READONLY_PASSWORD"] = []byte(dbReadOnlyPassword)
+		}
+
 		return data, nil
 	default:
 		return nil, errors.New("not supported engine type")
@@ -275,7 +336,7 @@ func generateTemplatedSecrets(dbcr *kciv1beta1.Database, databaseCred database.C
 
 	logrus.Infof("DB: namespace=%s, name=%s creating secrets from templates", dbcr.Namespace, dbcr.Name)
 	for key, value := range templates {
-		if slices.Contains(getBlockedTempatedKeys(), key) {
+		if slices.Contains(getBlockedTempatedKeys(dbcr.Spec.ReadOnlyUser), key) {
 			logrus.Warnf("DB: namespace=%s, name=%s %s can't be used for templating, because it's used for default secret created by operator",
 				dbcr.Namespace,
 				dbcr.Name,
@@ -301,7 +362,7 @@ func generateTemplatedSecrets(dbcr *kciv1beta1.Database, databaseCred database.C
 }
 
 func appendTemplatedSecretData(dbcr *kciv1beta1.Database, secretData map[string][]byte, newSecretFields map[string][]byte, ownership []metav1.OwnerReference) map[string][]byte {
-	blockedTempatedKeys := getBlockedTempatedKeys()
+	blockedTempatedKeys := getBlockedTempatedKeys(dbcr.Spec.ReadOnlyUser)
 	for key, value := range newSecretFields {
 		if slices.Contains(blockedTempatedKeys, key) {
 			logrus.Warnf("DB: namespace=%s, name=%s %s can't be used for templating, because it's used for default secret created by operator",
@@ -317,7 +378,7 @@ func appendTemplatedSecretData(dbcr *kciv1beta1.Database, secretData map[string]
 }
 
 func removeObsoleteSecret(dbcr *kciv1beta1.Database, secretData map[string][]byte, newSecretFields map[string][]byte, ownership []metav1.OwnerReference) map[string][]byte {
-	blockedTempatedKeys := getBlockedTempatedKeys()
+	blockedTempatedKeys := getBlockedTempatedKeys(dbcr.Spec.ReadOnlyUser)
 
 	for key := range secretData {
 		if _, ok := newSecretFields[key]; !ok {

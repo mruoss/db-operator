@@ -34,14 +34,25 @@ import (
 // represents a database on mysql instance
 // can be used to execute query to mysql database
 type Mysql struct {
-	Backend      string
-	Host         string
-	Port         uint16
-	Database     string
-	User         string
-	Password     string
-	SSLEnabled   bool
-	SkipCAVerify bool
+	Backend          string
+	Host             string
+	Port             uint16
+	Database         string
+	User             string
+	Password         string
+	SSLEnabled       bool
+	SkipCAVerify     bool
+	ReadOnlyUser     string
+	ReadOnlyPassword string
+}
+
+// createReadOnlyUser implements Database
+func (m Mysql) createReadOnlyUser(admin AdminCredentials) error {
+	return nil
+}
+
+func (m Mysql) deleteReadOnlyUser(admin AdminCredentials) error {
+	return nil
 }
 
 const mysqlDefaultSSLMode = "preferred"
