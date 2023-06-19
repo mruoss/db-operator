@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install buildah
-        run: sudo apt install -y podman buildah qemu-user-static
+        run: sudo apt update && sudo apt install -y podman buildah qemu-user-static
 
       - name: Build container amd64
         run: |
