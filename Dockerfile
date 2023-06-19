@@ -13,8 +13,7 @@ RUN go mod download
 # build
 COPY . .
 
-ARG GOARCH
-RUN GOOS=linux GOARCH=$GOARCH CGO_ENABLED=0 go build -tags build -o /usr/local/bin/db-operator main.go
+RUN GOOS=linux CGO_ENABLED=0 go build -tags build -o /usr/local/bin/db-operator main.go
 
 FROM alpine:3.18
 LABEL org.opencontainers.image.authors="Nikolai Rodionov<allanger@zohomail.com>"
