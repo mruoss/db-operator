@@ -16,6 +16,31 @@ env:
   main_go_path: .
 
 jobs:
+  test-buildah:
+    runs-on: ubuntu-latest
+    steps: 
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install buildah
+        run: sudo apt install -y podman buildah qemu-user-static
+
+      - name: Build container amd64
+        run: |
+          buildah bud \
+            --tag db-operator-amd64 \
+            --manifest db-operator \
+            --arch amd64 \
+            .
+      - name: Build container arm64
+        run: |
+          buildah bud \
+            --tag db-operator-arm64 \
+            --manifest db-operator \
+            --arch arm64 \
+            .
+
+    
   lint: ## https://github.com/golangci/golangci-lint-action#how-to-use
     runs-on: ubuntu-latest
     steps:
