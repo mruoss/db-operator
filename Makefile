@@ -37,6 +37,14 @@ test: $(SRC) ## run go unit test
 	go test -count=1 -tags tests ./... -v -cover
 	docker-compose down
 
+test-nctl: $(SRC) ## run go unit test
+	nerdctl compose down
+	nerdctl compose up -d
+	nerdctl compose restart sqladmin
+	sleep 20
+	go test -count=1 -tags tests ./... -v -cover
+	nerdctl compose down
+
 lint: $(SRC) ## lint go code
 	@go mod tidy
 	@gofumpt -l -w $^
